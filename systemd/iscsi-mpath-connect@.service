@@ -1,0 +1,20 @@
+[Unit]
+Description=iSCSI Multipath Connection for %i
+Documentation=man:iscsiadm(8) man:multipathd(8)
+After=network-online.target iscsid.service multipathd.service
+Wants=network-online.target
+Requires=iscsid.service multipathd.service
+Before=lvm2-activation.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/iscsi-mpath/%i.conf
+ExecStart=/bin/bash -c '/usr/local/bin/iscsi-connect.sh -t "${TARGET_IQN}" -a "${PORTALS}" -p "${PORT:-3260}" ${USERNAME:+-u "${USERNAME}"} ${PASSWORD:+-w "${PASSWORD}"} -s "${STARTUP:-automatic}"'
+ExecStop=/usr/local/bin/iscsi-connect.sh -d -t ${TARGET_IQN}
+TimeoutStartSec=120
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
+
