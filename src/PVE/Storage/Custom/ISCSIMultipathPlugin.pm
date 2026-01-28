@@ -20,8 +20,8 @@ my $MULTIPATH = '/sbin/multipath';
 my $MULTIPATHD = '/sbin/multipathd';
 
 # API Version for plugin compatibility
-use constant APIVER => 10;
-use constant APIAGE => 1;
+use constant APIVER => 13;
+use constant APIAGE => 0;
 
 sub api {
     return APIVER;
