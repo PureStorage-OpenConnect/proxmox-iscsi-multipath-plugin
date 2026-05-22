@@ -19,6 +19,12 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 # Check root
 [[ $EUID -eq 0 ]] || error "Run as root: sudo $0"
 
+# Detect PVE Storage API version for APIVER compatibility
+STORAGE_APIVER=$(grep -oP '(?<=use constant APIVER => )\d+' \
+    /usr/share/perl5/PVE/Storage.pm 2>/dev/null | head -1 || echo "13")
+PLUGIN_MAX_APIVER=14
+log "PVE Storage API version: $STORAGE_APIVER"
+
 # Update Perl plugin
 PLUGIN_SRC="$SCRIPT_DIR/src/PVE/Storage/Custom/ISCSIMultipathPlugin.pm"
 PLUGIN_DST="/usr/share/perl5/PVE/Storage/Custom/ISCSIMultipathPlugin.pm"
@@ -26,6 +32,11 @@ PLUGIN_DST="/usr/share/perl5/PVE/Storage/Custom/ISCSIMultipathPlugin.pm"
 if [[ -f "$PLUGIN_SRC" ]]; then
     log "Updating Perl plugin..."
     cp "$PLUGIN_SRC" "$PLUGIN_DST"
+    # Patch APIVER to match PVE's Storage API version (capped at our max)
+    if [[ "$STORAGE_APIVER" =~ ^[0-9]+$ ]] && [[ "$STORAGE_APIVER" -lt "$PLUGIN_MAX_APIVER" ]]; then
+        warn "Adjusting plugin APIVER: $PLUGIN_MAX_APIVER -> $STORAGE_APIVER"
+        sed -i "s/use constant APIVER => [0-9]\+;/use constant APIVER => $STORAGE_APIVER;/" "$PLUGIN_DST"
+    fi
     chmod 644 "$PLUGIN_DST"
 else
     warn "Plugin source not found: $PLUGIN_SRC"
@@ -34,14 +45,36 @@ fi
 # Update GUI
 GUI_SRC="$SCRIPT_DIR/www/ISCSIMultipathEdit.js"
 PVELIB="/usr/share/pve-manager/js/pvemanagerlib.js"
-PVELIB_ORIG="/usr/share/pve-manager/js/pvemanagerlib.js.orig"
+PVELIB_ORIG="/var/lib/iscsi-mpath-plugin/pvemanagerlib.js.original"
+
+MARKER_START="// ========== ISCSI-MPATH-PLUGIN-START =========="
+MARKER_END="// ========== ISCSI-MPATH-PLUGIN-END =========="
 
 if [[ -f "$GUI_SRC" ]]; then
     if [[ -f "$PVELIB_ORIG" ]]; then
-        log "Updating GUI (rebuilding pvemanagerlib.js)..."
-        cat "$PVELIB_ORIG" "$GUI_SRC" > "$PVELIB"
+        log "Updating GUI (rebuilding pvemanagerlib.js from original backup)..."
+        {
+            cat "$PVELIB_ORIG"
+            echo ""
+            echo "$MARKER_START"
+            cat "$GUI_SRC"
+            echo ""
+            echo "$MARKER_END"
+        } > "$PVELIB"
+        log "GUI updated successfully"
+    elif [[ -f "$PVELIB" ]] && grep -q "$MARKER_START" "$PVELIB"; then
+        log "Updating GUI (replacing existing injection)..."
+        sed -i "/$MARKER_START/,/$MARKER_END/d" "$PVELIB"
+        {
+            echo ""
+            echo "$MARKER_START"
+            cat "$GUI_SRC"
+            echo ""
+            echo "$MARKER_END"
+        } >> "$PVELIB"
+        log "GUI updated successfully"
     else
-        warn "Original pvemanagerlib.js not found. Run full install first."
+        warn "No GUI backup or existing injection found. Run install-gui.sh first."
     fi
 else
     warn "GUI source not found: $GUI_SRC"

@@ -11,9 +11,6 @@ BACKUP_FILE="$BACKUP_DIR/pvemanagerlib.js.original"
 MARKER_START="// ========== ISCSI-MPATH-PLUGIN-START =========="
 MARKER_END="// ========== ISCSI-MPATH-PLUGIN-END =========="
 
-# Tested pve-manager version - update this when testing on new versions
-TESTED_PVE_VERSION="9.1.4"
-
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
@@ -25,6 +22,17 @@ error() {
 
 warn() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1" >&2
+}
+
+# Returns 0 if the PVE version is within the supported range (8.x or 9.x)
+check_pve_version_compat() {
+    local version="$1"
+    local major
+    major=$(echo "$version" | cut -d'.' -f1)
+    [[ "$major" =~ ^[0-9]+$ ]] || return 1
+    [ "$major" -eq 8 ] && return 0
+    [ "$major" -eq 9 ] && return 0
+    return 1
 }
 
 # Check if running as root
@@ -45,24 +53,16 @@ if [ "$CURRENT_VERSION" = "unknown" ]; then
     warn "Could not determine pve-manager version"
     read -p "Continue anyway? [y/N] " -n 1 -r
     echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-elif [ "$CURRENT_VERSION" != "$TESTED_PVE_VERSION" ]; then
-    warn "pve-manager version mismatch!"
-    warn "  Installed: $CURRENT_VERSION"
-    warn "  Tested:    $TESTED_PVE_VERSION"
-    warn ""
-    warn "This GUI patch was tested on pve-manager $TESTED_PVE_VERSION."
-    warn "It may not work correctly on version $CURRENT_VERSION."
+    [[ $REPLY =~ ^[Yy]$ ]] || exit 1
+elif check_pve_version_compat "$CURRENT_VERSION"; then
+    log "  [OK] PVE $CURRENT_VERSION - supported"
+else
+    warn "PVE $CURRENT_VERSION is outside the tested range (8.x, 9.x)"
+    warn "The GUI patch may not work correctly on this version."
     echo ""
     read -p "Continue anyway? [y/N] " -n 1 -r
     echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-else
-    log "  [OK] pve-manager version $CURRENT_VERSION matches tested version"
+    [[ $REPLY =~ ^[Yy]$ ]] || exit 1
 fi
 
 # Create backup directory

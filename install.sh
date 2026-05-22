@@ -19,10 +19,41 @@ error() {
     exit 1
 }
 
+warn() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1" >&2
+}
+
+# Detect PVE version and Storage API version for APIVER compatibility
+detect_pve_info() {
+    PVE_FULL="unknown"
+    PVE_MAJOR=0
+    STORAGE_APIVER=13  # default to latest supported
+
+    if command -v pveversion &>/dev/null; then
+        PVE_FULL=$(pveversion 2>/dev/null | grep -oP 'pve-manager/\K[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
+        PVE_MAJOR=$(echo "$PVE_FULL" | cut -d'.' -f1)
+    fi
+
+    local storage_pm="/usr/share/perl5/PVE/Storage.pm"
+    if [ -f "$storage_pm" ]; then
+        local detected
+        detected=$(grep -oP '(?<=use constant APIVER => )\d+' "$storage_pm" 2>/dev/null | head -1)
+        [ -n "$detected" ] && STORAGE_APIVER="$detected"
+    fi
+
+    log "Detected: PVE $PVE_FULL (Storage API version: $STORAGE_APIVER)"
+
+    if [[ "$PVE_MAJOR" =~ ^[0-9]+$ ]] && [ "$PVE_MAJOR" -lt 7 ]; then
+        warn "PVE $PVE_FULL may be too old (< 7.0). Proceeding anyway..."
+    fi
+}
+
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
     error "This script must be run as root"
 fi
+
+detect_pve_info
 
 log "Installing Proxmox iSCSI Multipath Storage Plugin..."
 
@@ -37,6 +68,17 @@ mkdir -p "$PLUGIN_DIR"
 # Install plugin
 log "Installing ISCSIMultipathPlugin.pm..."
 cp "$SCRIPT_DIR/src/PVE/Storage/Custom/ISCSIMultipathPlugin.pm" "$PLUGIN_DIR/"
+
+# Patch APIVER to match the installed PVE's Storage API version (capped at our max)
+PLUGIN_MAX_APIVER=14
+if [[ "$STORAGE_APIVER" =~ ^[0-9]+$ ]] && [ "$STORAGE_APIVER" -lt "$PLUGIN_MAX_APIVER" ]; then
+    log "  Adjusting plugin APIVER: $PLUGIN_MAX_APIVER -> $STORAGE_APIVER (PVE $PVE_FULL)"
+    sed -i "s/use constant APIVER => [0-9]\+;/use constant APIVER => $STORAGE_APIVER;/" \
+        "$PLUGIN_DIR/ISCSIMultipathPlugin.pm"
+else
+    log "  Plugin APIVER: $PLUGIN_MAX_APIVER (matches PVE Storage API $STORAGE_APIVER)"
+fi
+
 chmod 644 "$PLUGIN_DIR/ISCSIMultipathPlugin.pm"
 
 # Install helper scripts
